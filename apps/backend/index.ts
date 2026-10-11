@@ -250,19 +250,43 @@ function matchFaces(
     ...review.map((r) => r.studentId),
   ]);
 
+  // score + status for every detected student (confident or review)
+  const detectionInfo = new Map<
+    string,
+    { score: number; status: "present" | "review"; reason?: string }
+  >();
+  for (const r of review) {
+    const prev = detectionInfo.get(r.studentId);
+    if (!prev || r.score > prev.score) {
+      detectionInfo.set(r.studentId, {
+        score: r.score,
+        status: "review",
+        reason: r.reason,
+      });
+    }
+  }
+  for (const [id, score] of present) {
+    detectionInfo.set(id, { score, status: "present" }); // confident match wins
+  }
+
   // marked but not detected => proxy
   const markedButNotDetected = markedAttendance
     .filter((id) => !detectedFaces.has(id))
     .map((id) => ({ rollNo: id, name: names.get(id) ?? "Unknown" }));
 
-  // not marked but detected
+  // not marked but detected => inside class, teacher can call them to verify
   const notMarkedButDetected = [...detectedFaces]
     .filter((id) => !markedAttendance.includes(id))
-    .map((id) => ({
-      rollNo: id,
-      name: names.get(id) ?? "Unknown",
-      score: present.get(id),
-    }));
+    .map((id) => {
+      const info = detectionInfo.get(id);
+      return {
+        rollNo: id,
+        name: names.get(id) ?? "Unknown",
+        score: info ? Number(info.score.toFixed(3)) : null,
+        status: info?.status ?? null, // "present" = confident, "review" = weak match
+        reason: info?.reason ?? null, // only for review: "low score" / "ambiguous"
+      };
+    });
 
   // marked and detected
   const presentList = [...present.entries()]
@@ -285,11 +309,10 @@ function matchFaces(
       score: Number(r.score.toFixed(3)),
       reason: r.reason,
     }));
-  const reviewIds = new Set(reviewList.map((r) => r.studentId));
 
-  // not marked and not detected
+  // absent: not detected in the photo AND not marked present
   const unconfirmed = everyOne
-    .filter((id) => !present.has(id) && !reviewIds.has(id))
+    .filter((id) => !detectedFaces.has(id) && !markedAttendance.includes(id))
     .map((id) => ({ studentId: id, name: names.get(id) }));
 
   return {
